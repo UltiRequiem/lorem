@@ -1,2 +1,6 @@
-codealike.json
 build/
+*.o
+*.a
+codealike.json
+.cache/
+compile_commands.json

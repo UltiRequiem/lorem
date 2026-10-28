@@ -1,29 +1,49 @@
-name: C++ CI
+name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+
+permissions:
+  contents: read
 
 jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
-
+  test:
+    name: Test (${{ matrix.os }}, ${{ matrix.compiler }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, compiler: gcc, cc: gcc, cxx: g++ }
+          - { os: ubuntu-latest, compiler: clang, cc: clang, cxx: clang++ }
+          - { os: macos-latest, compiler: apple-clang, cc: clang, cxx: clang++ }
+          - { os: windows-latest, compiler: msvc }
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build --config Release
+      - run: ctest --test-dir build --build-config Release --output-on-failure
+      - name: Install and use it from another project
+        shell: bash
+        run: |
+          cmake --install build --config Release --prefix "$PWD/prefix"
+          mkdir consumer
+          printf 'cmake_minimum_required(VERSION 3.14)\nproject(consumer CXX)\nfind_package(lorelai 1.0 REQUIRED)\nadd_executable(consumer main.cpp)\ntarget_link_libraries(consumer PRIVATE lorelai::lorelai)\n' > consumer/CMakeLists.txt
+          printf '#include <lorem_ipsum.hpp>\n#include <iostream>\nint main() { std::cout << lorelai::generate(3) << "\\n"; }\n' > consumer/main.cpp
+          cmake -S consumer -B consumer/build -DCMAKE_PREFIX_PATH="$PWD/prefix" -DCMAKE_BUILD_TYPE=Release
+          cmake --build consumer/build --config Release
 
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake g++
-
-      - name: Configure CMake
-        run: cmake -S . -B build
-
-      - name: Build project
-        run: cmake --build build
-
-      - name: Run tests
-        run: cd build && ctest
+  ci:
+    name: CI
+    if: always()
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every job to pass
+        run: |
+          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = "true" ]; then exit 1; fi
